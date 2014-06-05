@@ -1,0 +1,25 @@
+gerrit:
+  host: localhost
+  port: 29418
+  username: YourUserName
+  repo-dir: ~/tmp-all-projects
+  #git-author: "James Absalon <james.absalon@rackspace.com>"
+  all-projects-config: "/etc/gerrit/project.config"
+
+groups:
+  - name: group1
+    owner: Administrators
+    description: group1's description
+  - name: group2
+    owner: Administrators
+    description: group2's description
+
+users:
+  - username: someOtherUser
+    full-name: 'some other user'
+    http-password: some password
+    email: "someotheruser@somedomain.com"
+    ssh-key: "ssh-rsa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ssh key comment"
+    groups:
+      - "group1"
+      - "group2"
