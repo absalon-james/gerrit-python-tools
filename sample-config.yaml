@@ -3,8 +3,9 @@ gerrit:
   port: 29418
   username: YourUserName
   repo-dir: ~/tmp-all-projects
-  #git-author: "James Absalon <james.absalon@rackspace.com>"
   all-projects-config: "/etc/gerrit/project.config"
+  git-config-email: "someemailaddress@somedomain.com"
+  git-config-name: "some name"
 
 groups:
   - name: group1
