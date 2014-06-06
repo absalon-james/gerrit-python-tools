@@ -3,7 +3,7 @@ gerrit:
   port: 29418
   username: YourUserName
   repo-dir: ~/tmp-all-projects
-  all-projects-config: "/etc/gerrit/project.config"
+  all-projects-config: "/etc/gerrit-python-tools/project.config"
   git-config-email: "someemailaddress@somedomain.com"
   git-config-name: "some name"
 

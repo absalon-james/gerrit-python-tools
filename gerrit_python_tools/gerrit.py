@@ -468,10 +468,12 @@ def setup_all_projects(config, groups):
             repo_modified = True
 
         if repo_modified:
-            args = ['git', 'config', 'user.email', config['gerrit']['git-config-email']]
+            args = ['git', 'config', 'user.email',
+                    config['gerrit']['git-config-email']]
             subprocess.check_call(args)
 
-            args = ['git', 'config', 'user.name', config['gerrit']['git-config-name']]
+            args = ['git', 'config', 'user.name',
+                    config['gerrit']['git-config-name']]
             subprocess.check_call(args)
 
             # Git commit
