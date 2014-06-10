@@ -23,6 +23,7 @@ class SSH(object):
         @param key_filename - String or None
 
         """
+        port = int(port)
         self._ssh_kwargs = {
             'username': username,
             'port': port,
