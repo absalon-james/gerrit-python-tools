@@ -10,7 +10,6 @@ DEFAULT_CONFIG = {
         'username': 'SomeUser',
         'key_filename': None,
         'timeout': 10,
-        'repo-dir': '/opt/tmp-all-projects',
         'was-here-indicator': '### Setup by gerrit-setup ###'
     }
 }
@@ -18,7 +17,7 @@ DEFAULT_CONFIG = {
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description='Setup initial gerrit users, groups, and All-Projects'
+        description='Setup initial gerrit users, groups, and projects'
     )
     parser.add_argument('yaml_file', type=str, help="Path to yaml file")
     args = parser.parse_args()
@@ -46,5 +45,10 @@ if __name__ == '__main__':
         user = gerrit.User(user_data)
         user.present(ssh)
 
+    # Get list of groups for building groups file
     groups = gerrit.get_groups(ssh)
-    gerrit.setup_all_projects(_config, groups)
+
+    projects = _config.get('projects', [])
+    for p in projects:
+        project = gerrit.Project(p)
+        project.ensure(ssh, _config['gerrit'], groups)

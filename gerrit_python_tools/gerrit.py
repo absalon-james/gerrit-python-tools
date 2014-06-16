@@ -328,6 +328,270 @@ class User(object):
         return False
 
 
+class Project(object):
+    """
+    Models a gerrit project
+
+    """
+
+    def __init__(self, data):
+        """
+        Inits the project from a dictionary
+
+        @param data - Dictionary describing the gerrit project
+        """
+        if 'name' not in data:
+            raise Exception("Projects must have a name")
+        self._data = data
+
+    @property
+    def name(self):
+        """
+        Returns the project's name
+
+        @returns String
+
+        """
+        return self._data.get('name')
+
+    @property
+    def create(self):
+        """
+        Returns Boolean indicating whether or not to create
+        the project.
+
+        @return Boolean
+
+        """
+        return self._data.get('create', False)
+
+    @property
+    def config(self):
+        """
+        Returns the location of the project configuration
+        file.
+
+        @returns String|None
+
+        """
+        return self._data.get('config', None)
+
+    @property
+    def source(self):
+        """
+        Returns the source for this project if creating
+        from another repo. Should be a git url.
+
+        @returns String|None
+
+        """
+        return self._data.get('source', None)
+
+    def _create(self, ssh):
+        """
+        Attempts to create a project through gerrit ssh commands.
+
+        @param ssh - gerrit.SSH object
+
+        """
+        if self.create:
+            print "Attempting to create project %s" % self.name
+            cmd = 'gerrit create-project %s' % quote(self.name)
+            retcode, text = ssh.exec_once(cmd)
+            print text
+
+    def _config(self, gerrit_config, groups):
+        """
+        Builds the groups file and project.config file for a project.
+
+        @param gerrit_config - Dict Gerrit section of configuration
+        @param groups - List of groups
+
+        """
+        if not self.config:
+            return
+
+        print "Attempting to configure project %s" % self.name
+        repo_dir = '~/tmp'
+        repo_dir = os.path.expanduser(repo_dir)
+        repo_dir = os.path.abspath(repo_dir)
+
+        # Make Empty directory - We want this to stop and fail on OSError
+        print "Creating directory %s" % repo_dir
+        os.makedirs(repo_dir)
+
+        # Save the current working directory
+        old_cwd = os.getcwd()
+
+        indicator = gerrit_config['was-here-indicator']
+
+        try:
+            # Change cwd to that repo
+            os.chdir(repo_dir)
+
+            # Git init empty directory
+            print "Initting git directory."
+            args = ['git', 'init']
+            subprocess.check_call(args)
+
+            # Add remote origin
+            ssh_url = 'ssh://%s@%s:%s/%s' % (
+                gerrit_config['username'],
+                gerrit_config['host'],
+                gerrit_config['port'],
+                self.name
+            )
+            print "Adding remote %s" % ssh_url
+            args = ['git', 'remote', 'add', 'origin', ssh_url]
+            print ' '.join(args)
+            subprocess.check_call(args)
+
+            # Fetch refs/meta/config for project
+            print "Fetching refs/meta/config"
+            args = ['git', 'fetch', 'origin',
+                    'refs/meta/config:refs/remotes/origin/meta/config']
+            print " ".join(args)
+            subprocess.check_call(args)
+
+            # Checkout refs/meta/config
+            print "Checking out branch meta/config"
+            args = ['git', 'checkout', 'meta/config']
+            print " ".join(args)
+            subprocess.check_call(args)
+
+            repo_modified = False
+            # update groups file
+            # Check to see if groups was already touched by this tool.
+            _file = os.path.join(repo_dir, 'groups')
+            if not file_contains(_file, indicator):
+                # Create entire new groups file
+                contents = groups_file_contents(groups, indicator)
+                with open(_file, 'w') as f:
+                    f.write(contents)
+                repo_modified = True
+
+            # Update project.config file
+            # Check to see if this file was already touched by this tool.
+            _file = os.path.join(repo_dir, 'project.config')
+            if not file_contains(_file, indicator):
+                # Create the new project.config file
+                contents = project_config_contents(self.config, indicator)
+                with open(_file, 'w') as f:
+                    f.write(contents)
+                repo_modified = True
+
+            if repo_modified:
+                # Git config user.email
+                args = ['git', 'config', 'user.email',
+                        gerrit_config['git-config-email']]
+                subprocess.check_call(args)
+
+                # Git config user.name
+                args = ['git', 'config', 'user.name',
+                        gerrit_config['git-config-name']]
+                subprocess.check_call(args)
+
+                # Add groups and project.config
+                args = ['git', 'add', 'groups', 'project.config']
+                subprocess.check_call(args)
+
+                # Git commit
+                args = [
+                    'git', 'commit', '-m', 'Setting up %s' % self.name
+                ]
+                print "Committing changes."
+                subprocess.check_call(args)
+
+                # Git push
+                args = ['git', 'push', 'origin',
+                        'meta/config:refs/meta/config']
+                print "Pushing changes."
+                subprocess.check_call(args)
+
+            else:
+                print "groups and project.config already modified."
+
+        finally:
+            # Change to old current working directory
+            os.chdir(old_cwd)
+
+            # Attempt to clean up created directory
+            shutil.rmtree(repo_dir)
+
+    def _sync(self, gerrit_config):
+        """
+        Pushes all normal branches from a source repo to gerrit.
+
+        @param gerrit_config - Dictionary gerrit portion of configuration.
+
+        """
+        # Only sync if source repo is provided.
+        if not self.source:
+            return
+
+        print "Attempting to sync project %s with repo %s" % (
+            self.name,
+            self.source
+        )
+        repo_dir = '~/tmp'
+        repo_dir = os.path.expanduser(repo_dir)
+        repo_dir = os.path.abspath(repo_dir)
+
+        # Make Empty directory - We want this to stop and fail on OSError
+        print "Creating directory %s" % repo_dir
+        os.makedirs(repo_dir)
+
+        # Save the current working directory
+        old_cwd = os.getcwd()
+
+        try:
+            # Change cwd to that repo
+            os.chdir(repo_dir)
+
+            # Do a git clone --bare <source_repo>
+            print "Bare cloning source repo"
+            args = ['git', 'clone', '--bare', self.source, 'bare-clone']
+            subprocess.check_call(args)
+
+            # Change to bare cloned directory
+            os.chdir(os.path.join(repo_dir, 'bare-clone'))
+
+            # Add remote origin
+            ssh_url = 'ssh://%s@%s:%s/%s' % (
+                gerrit_config['username'],
+                gerrit_config['host'],
+                gerrit_config['port'],
+                self.name
+            )
+            print "Adding remote %s" % ssh_url
+            args = ['git', 'remote', 'add', 'gerrit', ssh_url]
+            print ' '.join(args)
+            subprocess.check_call(args)
+
+            # Go a git push --all
+            print "Pushing normal branches."
+            args = ['git', 'push', 'gerrit', '--all']
+            subprocess.check_call(args)
+
+        finally:
+            # Change to old current working directory
+            os.chdir(old_cwd)
+
+            # Attempt to clean up created directory
+            shutil.rmtree(repo_dir)
+
+    def ensure(self, ssh, gerrit_config, groups):
+
+        # Create Project if needed
+        self._create(ssh)
+
+        # Create submit a configuration if needed
+        self._config(gerrit_config, groups)
+
+        # Sync with source repo if needed
+        self._sync(gerrit_config)
+
+
 def get_groups(ssh):
     """
     Executes a gerrit ls-groups --verbose command and parses output
@@ -368,6 +632,16 @@ def get_groups(ssh):
 
 
 def groups_file_contents(groups, indicator=""):
+    """
+    Creates the contents of a groups file to be saved with a project's
+    configuration.
+
+    @param groups - List of gerrit.Group objects
+    @param indicator - String to prepend to beginning of contents
+        indicating this tool was run.
+    @return String
+
+    """
     _buffer = StringIO.StringIO()
     if len(indicator) > 0:
         _buffer.write(indicator)
@@ -378,6 +652,14 @@ def groups_file_contents(groups, indicator=""):
 
 
 def project_config_contents(source_file, indicator=""):
+    """
+    Creates the contents of a project configuration file. Prepends
+    a "I was here" to the beginning of the file.
+
+    @param source_file - String file name
+    @param indicator - String indicator
+    @return String
+    """
     _buffer = StringIO.StringIO()
     if len(indicator) > 0:
         _buffer.write(indicator)
@@ -388,113 +670,19 @@ def project_config_contents(source_file, indicator=""):
 
 
 def file_contains(_file, indicator):
+    """
+    Checks if indicator is in file.
+
+    @param _file - String file name
+    @param indicator - String to check for
+    @return Boolean
+
+    """
+    # Check if file exists first
+    if not os.path.isfile(_file):
+        return False
+
+    # Read contents
     with open(_file, 'r') as f:
         contents = f.read()
     return indicator in contents
-
-
-def setup_all_projects(config, groups):
-
-    print "Attempting to intialize All-Projects config"
-
-    repo_dir = os.path.expanduser(config['gerrit']['repo-dir'])
-    repo_dir = os.path.abspath(repo_dir)
-
-    # Make Empty directory - We want this to stop and fail on OSError
-    print "Creating directory %s" % repo_dir
-    os.makedirs(repo_dir)
-
-    # Save the current working directory
-    old_cwd = os.getcwd()
-
-    indicator = config['gerrit']['was-here-indicator']
-
-    try:
-        # Change cwd to that repo
-        os.chdir(repo_dir)
-
-        # Git init empty directory
-        print "Initting git directory."
-        args = ['git', 'init']
-        subprocess.check_call(args)
-
-        # Add remote origin
-        ssh_url = 'ssh://%s@%s:%s/All-Projects' % (
-            config['gerrit']['username'],
-            config['gerrit']['host'],
-            config['gerrit']['port']
-        )
-        print "Adding remote %s" % ssh_url
-        args = ['git', 'remote', 'add', 'origin', ssh_url]
-        print ' '.join(args)
-        subprocess.check_call(args)
-
-        # Fetch refs/meta/config for all-project
-        print "Fetching refs/meta/config"
-        args = ['git', 'fetch', 'origin',
-                'refs/meta/config:refs/remotes/origin/meta/config']
-        print " ".join(args)
-        subprocess.check_call(args)
-
-        # Checkout refs/meta/config
-        print "Checking out branch meta/config"
-        args = ['git', 'checkout', 'meta/config']
-        print " ".join(args)
-        subprocess.check_call(args)
-
-        repo_modified = False
-        # update groups file
-        # Check to see if groups was already touched by this tool.
-        _file = os.path.join(repo_dir, 'groups')
-        if not file_contains(_file, indicator):
-            # Create entire new groups file
-            contents = groups_file_contents(groups, indicator)
-            with open(_file, 'w') as f:
-                f.write(contents)
-            print contents
-            repo_modified = True
-
-        # Update project.config file
-        # Check to see if this file was already touched by this tool.
-        _file = os.path.join(repo_dir, 'project.config')
-        if not file_contains(_file, indicator):
-            # Create the new project.config file
-            contents = project_config_contents(
-                config['gerrit']['all-projects-config'],
-                indicator
-            )
-            with open(_file, 'w') as f:
-                f.write(contents)
-            print contents
-            repo_modified = True
-
-        if repo_modified:
-            args = ['git', 'config', 'user.email',
-                    config['gerrit']['git-config-email']]
-            subprocess.check_call(args)
-
-            args = ['git', 'config', 'user.name',
-                    config['gerrit']['git-config-name']]
-            subprocess.check_call(args)
-
-            # Git commit
-            args = [
-                'git', 'commit', '-a', '-m', 'Setting up All-Projects'
-            ]
-            print "Committing changes."
-            subprocess.check_call(args)
-
-            # Git push
-            args = ['git', 'push', 'origin', 'meta/config:refs/meta/config']
-            print "Pushing changes."
-            subprocess.check_call(args)
-
-        else:
-            print "groups and project.config already modified."
-
-    finally:
-        # Change to old current working directory
-        os.chdir(old_cwd)
-
-        # Attempt to clean up created directory
-        shutil.rmtree(repo_dir)

@@ -2,8 +2,6 @@ gerrit:
   host: localhost
   port: 29418
   username: YourUserName
-  repo-dir: ~/tmp-all-projects
-  all-projects-config: "/etc/gerrit-python-tools/project.config"
   git-config-email: "someemailaddress@somedomain.com"
   git-config-name: "some name"
 
@@ -24,3 +22,10 @@ users:
     groups:
       - "group1"
       - "group2"
+
+#projects:
+#  - name: All-Projects
+#    config: /etc/gerrit-pytho-tools/acls/All-Projects.config
+#  - name: Project1
+#    config: /etc/gerrit-python-tools/acls/Project1.config
+#    source: git_repo_url
