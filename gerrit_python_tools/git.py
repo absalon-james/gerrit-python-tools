@@ -95,7 +95,7 @@ def set_config(name, value):
 
     """
     args = ['git', 'config', name, value]
-    subprocess.check_Call(args)
+    subprocess.check_call(args)
 
 
 def add(things):
