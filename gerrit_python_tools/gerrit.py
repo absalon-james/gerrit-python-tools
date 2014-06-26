@@ -1,9 +1,10 @@
+import git
 import os
 import paramiko
 import re
 import shutil
 import StringIO
-import subprocess
+from uuid import uuid4
 from pipes import quote
 
 
@@ -416,6 +417,9 @@ class Project(object):
         repo_dir = os.path.expanduser(repo_dir)
         repo_dir = os.path.abspath(repo_dir)
 
+        uuid_dir = str(uuid4())
+        repo_dir = os.path.join(repo_dir, uuid_dir)
+
         # Make Empty directory - We want this to stop and fail on OSError
         print "Creating directory %s" % repo_dir
         os.makedirs(repo_dir)
@@ -425,14 +429,15 @@ class Project(object):
 
         indicator = gerrit_config['was-here-indicator']
 
+        origin = 'origin'
+
         try:
             # Change cwd to that repo
             os.chdir(repo_dir)
 
             # Git init empty directory
             print "Initting git directory."
-            args = ['git', 'init']
-            subprocess.check_call(args)
+            git.init()
 
             # Add remote origin
             ssh_url = 'ssh://%s@%s:%s/%s' % (
@@ -441,23 +446,25 @@ class Project(object):
                 gerrit_config['port'],
                 self.name
             )
-            print "Adding remote %s" % ssh_url
-            args = ['git', 'remote', 'add', 'origin', ssh_url]
-            print ' '.join(args)
-            subprocess.check_call(args)
+
+            # print "Adding remote %s" % ssh_url
+            # args = ['git', 'remote', 'add', 'origin', ssh_url]
+            # print ' '.join(args)
+            git.add_remote(origin, ssh_url)
 
             # Fetch refs/meta/config for project
-            print "Fetching refs/meta/config"
-            args = ['git', 'fetch', 'origin',
-                    'refs/meta/config:refs/remotes/origin/meta/config']
-            print " ".join(args)
-            subprocess.check_call(args)
+            # print "Fetching refs/meta/config"
+            # args = ['git', 'fetch', 'origin',
+            #        'refs/meta/config:refs/remotes/origin/meta/config']
+            # print " ".join(args)
+            refspec = 'refs/meta/config:refs/remotes/origin/meta/config'
+            git.fetch(origin, refspec)
 
             # Checkout refs/meta/config
-            print "Checking out branch meta/config"
-            args = ['git', 'checkout', 'meta/config']
-            print " ".join(args)
-            subprocess.check_call(args)
+            # print "Checking out branch meta/config"
+            # args = ['git', 'checkout', 'meta/config']
+            # print " ".join(args)
+            git.checkout_branch('meta/config')
 
             repo_modified = False
             # update groups file
@@ -482,31 +489,31 @@ class Project(object):
 
             if repo_modified:
                 # Git config user.email
-                args = ['git', 'config', 'user.email',
-                        gerrit_config['git-config-email']]
-                subprocess.check_call(args)
+                git.set_config('user.email', gerrit_config['git-config-email'])
+                # args = ['git', 'config', 'user.email',
+                #        gerrit_config['git-config-email']]
 
                 # Git config user.name
-                args = ['git', 'config', 'user.name',
-                        gerrit_config['git-config-name']]
-                subprocess.check_call(args)
+                git.set_config('user.name', gerrit_config['git-config-name'])
+                # args = ['git', 'config', 'user.name',
+                #        gerrit_config['git-config-name']]
 
                 # Add groups and project.config
-                args = ['git', 'add', 'groups', 'project.config']
-                subprocess.check_call(args)
+                # args = ['git', 'add', 'groups', 'project.config']
+                git.add(['groups', 'project.config'])
 
                 # Git commit
-                args = [
-                    'git', 'commit', '-m', 'Setting up %s' % self.name
-                ]
-                print "Committing changes."
-                subprocess.check_call(args)
+                # args = [
+                #    'git', 'commit', '-m', 'Setting up %s' % self.name
+                # ]
+                git.commit(message='Setting up %s' % self.name)
+                # print "Committing changes."
 
                 # Git push
-                args = ['git', 'push', 'origin',
-                        'meta/config:refs/meta/config']
-                print "Pushing changes."
-                subprocess.check_call(args)
+                git.push(origin, refspecs='meta/config:refs/meta/config')
+                # args = ['git', 'push', 'origin',
+                #        'meta/config:refs/meta/config']
+                # print "Pushing changes."
 
             else:
                 print "groups and project.config already modified."
@@ -538,8 +545,9 @@ class Project(object):
         repo_dir = os.path.abspath(repo_dir)
 
         # Make Empty directory - We want this to stop and fail on OSError
-        print "Creating directory %s" % repo_dir
-        os.makedirs(repo_dir)
+        if not os.path.isdir(repo_dir):
+            print "Creating directory %s" % repo_dir
+            os.makedirs(repo_dir)
 
         # Save the current working directory
         old_cwd = os.getcwd()
@@ -548,30 +556,34 @@ class Project(object):
             # Change cwd to that repo
             os.chdir(repo_dir)
 
+            uuid_dir = str(uuid4())
+            repo_dir = os.path.join(repo_dir, uuid_dir)
+
             # Do a git clone --bare <source_repo>
-            print "Bare cloning source repo"
-            args = ['git', 'clone', '--bare', self.source, 'bare-clone']
-            subprocess.check_call(args)
+            # print "Bare cloning source repo"
+            # args = ['git', 'clone', '--bare', self.source, uuid_dir]
+            git.clone(self.source, name=uuid_dir, bare=True)
 
             # Change to bare cloned directory
-            os.chdir(os.path.join(repo_dir, 'bare-clone'))
+            # os.chdir(os.path.join(repo_dir, uuid_dir))
+            os.chdir(uuid_dir)
 
-            # Add remote origin
+            # Add remote named gerrit
             ssh_url = 'ssh://%s@%s:%s/%s' % (
                 gerrit_config['username'],
                 gerrit_config['host'],
                 gerrit_config['port'],
                 self.name
             )
-            print "Adding remote %s" % ssh_url
-            args = ['git', 'remote', 'add', 'gerrit', ssh_url]
-            print ' '.join(args)
-            subprocess.check_call(args)
+            # print "Adding remote %s" % ssh_url
+            # args = ['git', 'remote', 'add', 'gerrit', ssh_url]
+            # print ' '.join(args)
+            git.add_remote('gerrit', ssh_url)
 
             # Go a git push --all
-            print "Pushing normal branches."
-            args = ['git', 'push', 'gerrit', '--all']
-            subprocess.check_call(args)
+            # print "Pushing normal branches."
+            # args = ['git', 'push', 'gerrit', '--all']
+            git.push('gerrit', all_=True)
 
         finally:
             # Change to old current working directory
