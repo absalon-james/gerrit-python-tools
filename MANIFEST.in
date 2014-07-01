@@ -1,2 +1,3 @@
 include README.md
 include sample-config.yaml
+include sample-logging.yaml

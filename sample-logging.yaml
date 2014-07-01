@@ -1,0 +1,3 @@
+file: '/var/log/gerrit-python-tools/gerrit-sync'
+level: 'info'
+format: '%(asctime)s - %(levelname)s - %(message)s'

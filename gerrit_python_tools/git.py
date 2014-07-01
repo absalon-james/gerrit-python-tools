@@ -5,6 +5,36 @@ existing python/git libraries.
 
 """
 import subprocess
+import log
+
+logger = log.get_logger()
+
+
+class Ref(object):
+    """
+    Models a reference returned by git ls-remotes.
+    Should have a hash and a name
+
+    """
+    def __init__(self, hash_, name):
+        self.hash = hash_
+        self.name = name
+
+    def __str__(self):
+        return "\t".join([self.hash, self.name])
+
+
+def git_cmd(args):
+    """
+    Convenience method to bundle logged git commands with execution of said
+    igt commands.
+
+    @param args - List or String reprsenting command to send to subprocess
+
+    """
+    msg = " ". join(args)
+    logger.debug(msg)
+    subprocess.check_call(args)
 
 
 def listify(thing):
@@ -27,7 +57,7 @@ def init():
 
     """
     args = ['git', 'init']
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def add_remote(name, url):
@@ -43,7 +73,7 @@ def add_remote(name, url):
 
     """
     args = ['git', 'remote', 'add', name, url]
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def fetch(remote, refspecs):
@@ -61,7 +91,7 @@ def fetch(remote, refspecs):
     refspecs = listify(refspecs)
     args = ['git', 'fetch', remote]
     args = args + refspecs
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def checkout_branch(name, new=False):
@@ -79,7 +109,7 @@ def checkout_branch(name, new=False):
     args = ['git', 'checkout', name]
     if new:
         args.insert(2, '-b')
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def set_config(name, value):
@@ -95,7 +125,7 @@ def set_config(name, value):
 
     """
     args = ['git', 'config', name, value]
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def add(things):
@@ -113,7 +143,7 @@ def add(things):
     if isinstance(things, str):
         things = listify(things)
     args = ['git', 'add'] + things
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def commit(message=''):
@@ -126,7 +156,7 @@ def commit(message=''):
 
     """
     args = ['git', 'commit', '-m', message]
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def push(remote, all_=False, tags=False, refspecs=None):
@@ -151,7 +181,7 @@ def push(remote, all_=False, tags=False, refspecs=None):
     if refspecs:
         refspecs = listify(refspecs)
         args = args + refspecs
-    subprocess.check_call(args)
+    git_cmd(args)
 
 
 def clone(source, name=None, bare=False):
@@ -172,4 +202,28 @@ def clone(source, name=None, bare=False):
         args.append(name)
     if bare:
         args.insert(2, '--bare')
-    subprocess.check_call(args)
+    git_cmd(args)
+
+
+def remote_refs(remote, heads=False, tags=False):
+    """
+    git ls-remote
+    Parses the output of git ls-remote
+
+    Equivalent to
+        git ls-remote [--heads] [--tags] <remote>
+
+    @param remote - String remote name
+    @param heads - Boolean look at all heads
+    @param tags - Boolean look at all tags
+    @returns - Set of all refs
+
+    """
+    args = ['git', 'ls-remote', remote]
+    if heads:
+        args.insert(2, '--heads')
+    if tags:
+        args.insert(2, '--tags')
+    cmd = subprocess.Popen(args, stdout=subprocess.PIPE)
+    s = lambda line: line.rstrip().split("\t")[1]
+    return set(map(s, cmd.stdout))

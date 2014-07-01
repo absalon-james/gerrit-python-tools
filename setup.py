@@ -3,7 +3,7 @@ from gerrit_python_tools.meta import version, license
 
 description = "Various tools in python for interacting with gerrit."
 data_files = [
-    ('/etc/gerrit-python-tools', ['sample-config.yaml'])
+    ('/etc/gerrit-python-tools', ['sample-config.yaml','sample-logging.yaml'])
 ]
 
 with open('README.md', 'r') as f:
@@ -20,5 +20,5 @@ setup(
     packages=find_packages(),
     zip_safe=True,
     data_files=data_files,
-    scripts=['bin/gerrit-setup']
+    scripts=['bin/gerrit-sync']
 )
