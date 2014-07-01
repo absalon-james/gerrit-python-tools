@@ -1,4 +1,6 @@
 import git
+import log
+import logging
 import os
 import paramiko
 import re
@@ -6,6 +8,12 @@ import shutil
 import StringIO
 from uuid import uuid4
 from pipes import quote
+
+# Turn down the logging output of paramiko
+log.get_logger('paramiko').setLevel(logging.ERROR)
+
+# Get a logger
+logger = log.get_logger()
 
 
 class SSH(object):
@@ -46,6 +54,7 @@ class SSH(object):
             is non zero
 
         """
+        logger.debug("Executing: %s" % cmd)
         client = paramiko.SSHClient()
         client.load_system_host_keys()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -55,10 +64,10 @@ class SSH(object):
 
         retcode = stdout.channel.recv_exit_status()
         stream = stdout if not retcode else stderr
-        # lines = [line for line in stream.readlines()]
-        lines = stream.read()
+        output = stream.read()
         client.close()
-        return retcode, lines
+        logger.debug(output)
+        return retcode, output
 
 
 class Group(object):
@@ -182,15 +191,23 @@ class Group(object):
         @return True if the group exists or was created, False otherwise.
 
         """
+        msg = "Group %s: Ensuring present." % self.name
+        logger.info(msg)
+        print msg
+
         # If the group already exists, do nothing.
         if self.exists(ssh):
-            print "Group '%s' already exists." % self.name
+            msg = "Group %s: Already exists." % self.name
+            logger.info(msg)
+            print msg
             return
 
         # Try to create the group
         retcode, __ = ssh.exec_once(self.get_create())
         if not retcode:
-            print "Created group '%s'" % self.name
+            msg = "Group %s: Created" % self.name
+            logger.info(msg)
+            print msg
         return True if not retcode else False
 
 
@@ -246,7 +263,7 @@ class User(object):
     def full_name(self):
         """
         Returns the full name or None
-
+k
         @returns String|None
 
         """
@@ -318,14 +335,25 @@ class User(object):
         @returns Boolean True for created or already exists. False otherwise.
 
         """
+        msg = "User %s: Ensuring present." % self.username
+        logger.info(msg)
+        print msg
+
         retcode, out = ssh.exec_once(self.get_create())
         if not retcode:
-            print "Created user %s" % self.username
+            msg = "User %s: Created." % self.username
+            logger.info(msg)
+            print msg
             return True
         if retcode == 1 and 'already exists' in out:
-            print "User %s already exists" % self.username
+            msg = "User %s: Already exists." % self.username
+            logger.info(msg)
+            print msg
             return True
-        print "Unable to create user %s:%s" % (self.username, out)
+
+        msg = "User %s: Unable to create - %s" % (self.username, out)
+        log.error(msg)
+        print msg
         return False
 
 
@@ -388,6 +416,16 @@ class Project(object):
         """
         return self._data.get('source', None)
 
+    @property
+    def preserve_prefix(self):
+        """
+        Returns the prefix for branches that should be preserved and
+        not deleted.
+
+        @returns String|None
+        """
+        return self._data.get('preserve_prefix', None)
+
     def _create(self, ssh):
         """
         Attempts to create a project through gerrit ssh commands.
@@ -396,10 +434,8 @@ class Project(object):
 
         """
         if self.create:
-            print "Attempting to create project %s" % self.name
             cmd = 'gerrit create-project %s' % quote(self.name)
             retcode, text = ssh.exec_once(cmd)
-            print text
 
     def _config(self, gerrit_config, groups):
         """
@@ -412,7 +448,10 @@ class Project(object):
         if not self.config:
             return
 
-        print "Attempting to configure project %s" % self.name
+        msg = "Project %s: Configuring." % self.name
+        logger.info(msg)
+        print msg
+
         repo_dir = '~/tmp'
         repo_dir = os.path.expanduser(repo_dir)
         repo_dir = os.path.abspath(repo_dir)
@@ -421,7 +460,9 @@ class Project(object):
         repo_dir = os.path.join(repo_dir, uuid_dir)
 
         # Make Empty directory - We want this to stop and fail on OSError
-        print "Creating directory %s" % repo_dir
+        logger.debug(
+            "Project %s: Creating directory %s" % (self.name, repo_dir)
+        )
         os.makedirs(repo_dir)
 
         # Save the current working directory
@@ -436,7 +477,6 @@ class Project(object):
             os.chdir(repo_dir)
 
             # Git init empty directory
-            print "Initting git directory."
             git.init()
 
             # Add remote origin
@@ -447,30 +487,21 @@ class Project(object):
                 self.name
             )
 
-            # print "Adding remote %s" % ssh_url
-            # args = ['git', 'remote', 'add', 'origin', ssh_url]
-            # print ' '.join(args)
             git.add_remote(origin, ssh_url)
 
             # Fetch refs/meta/config for project
-            # print "Fetching refs/meta/config"
-            # args = ['git', 'fetch', 'origin',
-            #        'refs/meta/config:refs/remotes/origin/meta/config']
-            # print " ".join(args)
             refspec = 'refs/meta/config:refs/remotes/origin/meta/config'
             git.fetch(origin, refspec)
 
             # Checkout refs/meta/config
-            # print "Checking out branch meta/config"
-            # args = ['git', 'checkout', 'meta/config']
-            # print " ".join(args)
             git.checkout_branch('meta/config')
 
             repo_modified = False
-            # update groups file
+            # Update groups file
             # Check to see if groups was already touched by this tool.
             _file = os.path.join(repo_dir, 'groups')
             if not file_contains(_file, indicator):
+                logger.info("Project %s: writing groups file" % self.name)
                 # Create entire new groups file
                 contents = groups_file_contents(groups, indicator)
                 with open(_file, 'w') as f:
@@ -481,6 +512,9 @@ class Project(object):
             # Check to see if this file was already touched by this tool.
             _file = os.path.join(repo_dir, 'project.config')
             if not file_contains(_file, indicator):
+                logger.info(
+                    "Project %s: Writing project.config file" % self.name
+                )
                 # Create the new project.config file
                 contents = project_config_contents(self.config, indicator)
                 with open(_file, 'w') as f:
@@ -490,33 +524,25 @@ class Project(object):
             if repo_modified:
                 # Git config user.email
                 git.set_config('user.email', gerrit_config['git-config-email'])
-                # args = ['git', 'config', 'user.email',
-                #        gerrit_config['git-config-email']]
 
                 # Git config user.name
                 git.set_config('user.name', gerrit_config['git-config-name'])
-                # args = ['git', 'config', 'user.name',
-                #        gerrit_config['git-config-name']]
 
                 # Add groups and project.config
-                # args = ['git', 'add', 'groups', 'project.config']
                 git.add(['groups', 'project.config'])
 
                 # Git commit
-                # args = [
-                #    'git', 'commit', '-m', 'Setting up %s' % self.name
-                # ]
                 git.commit(message='Setting up %s' % self.name)
-                # print "Committing changes."
 
                 # Git push
                 git.push(origin, refspecs='meta/config:refs/meta/config')
-                # args = ['git', 'push', 'origin',
-                #        'meta/config:refs/meta/config']
-                # print "Pushing changes."
+                logger.info("Project %s: pushed configuration." % self.name)
 
             else:
-                print "groups and project.config already modified."
+                msg = "Project %s: groups and project.config already modified." \
+                      % self.name
+                logger.info(msg)
+                print msg
 
         finally:
             # Change to old current working directory
@@ -536,18 +562,20 @@ class Project(object):
         if not self.source:
             return
 
-        print "Attempting to sync project %s with repo %s" % (
-            self.name,
-            self.source
-        )
+        msg = "Project %s: syncing with repo %s." % (self.name, self.source)
+        logger.info(msg)
+        print msg
+
         repo_dir = '~/tmp'
         repo_dir = os.path.expanduser(repo_dir)
         repo_dir = os.path.abspath(repo_dir)
 
         # Make Empty directory - We want this to stop and fail on OSError
         if not os.path.isdir(repo_dir):
-            print "Creating directory %s" % repo_dir
             os.makedirs(repo_dir)
+            logger.debug(
+                "Project %s: Created directory %s" % (self.name, repo_dir)
+            )
 
         # Save the current working directory
         old_cwd = os.getcwd()
@@ -560,12 +588,9 @@ class Project(object):
             repo_dir = os.path.join(repo_dir, uuid_dir)
 
             # Do a git clone --bare <source_repo>
-            # print "Bare cloning source repo"
-            # args = ['git', 'clone', '--bare', self.source, uuid_dir]
             git.clone(self.source, name=uuid_dir, bare=True)
 
             # Change to bare cloned directory
-            # os.chdir(os.path.join(repo_dir, uuid_dir))
             os.chdir(uuid_dir)
 
             # Add remote named gerrit
@@ -575,15 +600,34 @@ class Project(object):
                 gerrit_config['port'],
                 self.name
             )
-            # print "Adding remote %s" % ssh_url
-            # args = ['git', 'remote', 'add', 'gerrit', ssh_url]
-            # print ' '.join(args)
             git.add_remote('gerrit', ssh_url)
 
-            # Go a git push --all
-            # print "Pushing normal branches."
-            # args = ['git', 'push', 'gerrit', '--all']
+            # Grab origin refs
+            origin_refset = git.remote_refs('origin', heads=True, tags=True)
+
+            # Grab gerrit refs
+            gerrit_refset = git.remote_refs('gerrit', heads=True)
+
+            prune_refset = gerrit_refset - origin_refset
+            if self.preserve_prefix:
+                msg = "Project %s: Preserving refs with prefixes of %s" \
+                      % (self.name, self.preserve_prefix)
+                logger.debug(msg)
+                heads_prefix = "refs/heads/%s" % self.preserve_prefix
+                tags_prefix = "refs/tags/%s" % self.preserve_prefix
+                keep = lambda ref: not ref.startswith(heads_prefix) and \
+                    not ref.startswith(tags_prefix)
+                prune_refset = filter(keep, prune_refset)
+
+            colonize = lambda ref: ':%s' % ref
+            prune_refset = map(colonize, prune_refset)
+
+            # Do a git push --all
             git.push('gerrit', all_=True)
+
+            # Remove branches no longer needed
+            if prune_refset:
+                git.push('gerrit', refspecs=prune_refset)
 
         finally:
             # Change to old current working directory
@@ -593,6 +637,10 @@ class Project(object):
             shutil.rmtree(repo_dir)
 
     def ensure(self, ssh, gerrit_config, groups):
+
+        msg = "Project %s: Ensuring present." % self.name
+        logger.info(msg)
+        print msg
 
         # Create Project if needed
         self._create(ssh)
@@ -619,7 +667,9 @@ def get_groups(ssh):
     # Need a retcode of 0 for success
     retcode, out = ssh.exec_once(cmd)
     if retcode != 0:
-        print "Unable to retrieve list of groups."
+        msg = "Unable to retrieve list of gerrit groups."
+        logger.error(msg)
+        print msg
         return groups
 
     # Send to buffer to easy read one line at a time
