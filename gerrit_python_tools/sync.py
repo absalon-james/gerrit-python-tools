@@ -136,5 +136,6 @@ def sync(yaml_file=None, groups=True, users=True, projects=True, project=None):
         msg = "gerrit-sync run finished in %s seconds." % duration
         logger.info(msg)
         print msg
-    except Exception:
+    except Exception as e:
         logging.exception("Error occurred:")
+        raise e
