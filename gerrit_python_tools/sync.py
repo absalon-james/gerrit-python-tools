@@ -45,11 +45,11 @@ def sync_groups(_config):
     if they DO NOT exist but will leave them alone if they DO exist.
 
     @param _config - Dictionary
-  
+
     """
     ssh = get_ssh(_config)
-    for group_data in _config.get('groups', []):        
-        group = gerrit.Group(group_data)        
+    for group_data in _config.get('groups', []):
+        group = gerrit.Group(group_data)
         group.present(ssh)
         print ""
 

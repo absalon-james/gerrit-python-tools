@@ -426,6 +426,40 @@ class Project(object):
         """
         return self._data.get('preserve_prefix', None)
 
+    @property
+    def heads(self):
+        """
+        Returns whether or not to include head branches.
+        Default is to include heads.
+
+        @returns Boolean - True for include heads, false otherwise
+
+        """
+        return self._data.get('heads', True)
+
+    @property
+    def tags(self):
+        """
+        Returns whether or not to include tags.
+        Default is to exclude tags
+
+        @returns Boolean - True for include tags, false otherwise
+
+        """
+        return self._data.get('tags', False)
+
+    @property
+    def force(self):
+        """
+        Returns whether or not to force commits. This will allow this tool
+        to overwrite refs that are not ancestors of a branch from upstream.
+        Default is to allow force commits.
+
+        @returns Boolean - True for allow force commits, false otherwise
+
+        """
+        return self._data.get('force', True)
+
     def _create(self, ssh):
         """
         Attempts to create a project through gerrit ssh commands.
@@ -551,6 +585,14 @@ class Project(object):
             # Attempt to clean up created directory
             shutil.rmtree(repo_dir)
 
+    def ref_kwargs(self):
+        kwargs = {}
+        if self.heads:
+            kwargs['heads'] = True
+        if self.tags:
+            kwargs['tags'] = True
+        return kwargs
+
     def _sync(self, gerrit_config):
         """
         Pushes all normal branches from a source repo to gerrit.
@@ -560,6 +602,10 @@ class Project(object):
         """
         # Only sync if source repo is provided.
         if not self.source:
+            return
+
+        # Only sync if heads and/or tags are specified
+        if not self.heads and not self.tags:
             return
 
         msg = "Project %s: syncing with repo %s." % (self.name, self.source)
@@ -602,28 +648,44 @@ class Project(object):
             )
             git.add_remote('gerrit', ssh_url)
 
+            # Push heads
+            if self.heads:
+                kwargs = {'all_': True}
+                if self.force:
+                    kwargs['force'] = True
+                git.push('gerrit', **kwargs)
+
+            # Push tags
+            if self.tags:
+                kwargs = {'tags': True}
+                if self.force:
+                    kwargs['force'] = True
+                git.push('gerrit', **kwargs)
+
+            ref_kwargs = self.ref_kwargs()
+
             # Grab origin refs
-            origin_refset = git.remote_refs('origin', heads=True, tags=True)
+            origin_refset = git.remote_refs('origin', **ref_kwargs)
 
             # Grab gerrit refs
-            gerrit_refset = git.remote_refs('gerrit', heads=True)
+            gerrit_refset = git.remote_refs('gerrit', **ref_kwargs)
 
+            # Find refs that should be removed.
             prune_refset = gerrit_refset - origin_refset
             if self.preserve_prefix:
                 msg = "Project %s: Preserving refs with prefixes of %s" \
                       % (self.name, self.preserve_prefix)
                 logger.debug(msg)
+                print msg
                 heads_prefix = "refs/heads/%s" % self.preserve_prefix
                 tags_prefix = "refs/tags/%s" % self.preserve_prefix
                 keep = lambda ref: not ref.startswith(heads_prefix) and \
                     not ref.startswith(tags_prefix)
                 prune_refset = filter(keep, prune_refset)
 
+            # Prefix each ref in refset with ':' to delete
             colonize = lambda ref: ':%s' % ref
             prune_refset = map(colonize, prune_refset)
-
-            # Do a git push --all
-            git.push('gerrit', all_=True)
 
             # Remove branches no longer needed
             if prune_refset:
@@ -637,7 +699,19 @@ class Project(object):
             shutil.rmtree(repo_dir)
 
     def ensure(self, ssh, gerrit_config, groups):
+        """
+        Ensures this project is present on gerrit.
+        Can optionally create the project if it does not exits.
+        Can optionally specify a configuration for the project.
+        Can optionally sync the project with another repo.
 
+        @param ssh - gerrit.SSH object
+        @param gerrit_config - Dictionary that configures talking
+            to gerrit/git
+        @param groups - List of gerrit.Group objects for building groups
+            file with config.
+
+        """
         msg = "Project %s: Ensuring present." % self.name
         logger.info(msg)
         print msg

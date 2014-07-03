@@ -159,7 +159,7 @@ def commit(message=''):
     git_cmd(args)
 
 
-def push(remote, all_=False, tags=False, refspecs=None):
+def push(remote, all_=False, tags=False, force=False, refspecs=None):
     """
     git push
 
@@ -178,6 +178,8 @@ def push(remote, all_=False, tags=False, refspecs=None):
         args.append('--all')
     if tags:
         args.append('--tags')
+    if force:
+        args.append('--force')
     if refspecs:
         refspecs = listify(refspecs)
         args = args + refspecs
