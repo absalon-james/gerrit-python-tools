@@ -5,6 +5,18 @@ gerrit:
   git-config-email: "someemailaddress@somedomain.com"
   git-config-name: "some name"
 
+upstream:
+  host: some-upstream-gerrit.some-host.com
+  port: 29418
+  username: YourUserName
+  timeout: 10
+  keepalive: 10
+
+daemon:
+  sleep: 5
+  delay: 120
+  numthreads: 5
+
 groups:
   - name: group1
     owner: Administrators
@@ -23,9 +35,11 @@ users:
       - "group1"
       - "group2"
 
-#projects:
-#  - name: All-Projects
-#    config: /etc/gerrit-pytho-tools/acls/All-Projects.config
-#  - name: Project1
-#    config: /etc/gerrit-python-tools/acls/Project1.config
-#    source: git_repo_url
+projects:
+  - name: All-Projects
+    config: /etc/gerrit-python-tools/acls/All-Projects.config
+
+  - name: project-1
+    config: /etc/gerrit-python-tools/acls/project-1..config
+    create: True
+    source: 'https://github.com/YourUserName/project-1.git'

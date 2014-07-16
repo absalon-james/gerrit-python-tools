@@ -1,8 +1,10 @@
-import time
 import config
 import gerrit
 import log
 import logging
+import signal
+import time
+import thread
 
 
 DEFAULT_CONFIG = {
@@ -13,6 +15,19 @@ DEFAULT_CONFIG = {
         'key_filename': None,
         'timeout': 10,
         'was-here-indicator': '### Setup by gerrit-sync ###'
+    },
+    'upstream': {
+        'host': '',
+        'port': 29418,
+        'username': 'SomeUser',
+        'key_filename': None,
+        'timeout': 10,
+        'keepalive': 60
+    },
+    'daemon': {
+        'numthreads': 5,
+        'sleep': 5,
+        'delay': 60 * 2
     }
 }
 
@@ -37,6 +52,40 @@ def get_ssh(_config):
         gerrit_config['username'],
         gerrit_config['key_filename']
     )
+
+
+def get_ssh_stream(_config):
+    """
+    Creates a gerrit.SSHStream object from a dictionary of parameters.
+
+    @param _config - Dictionary with the key 'upstream' and a value of
+        a dictionary with host, port, timeout, username, key_filename, and
+        keepalive keys.
+    @return gerrit.SSHStream
+
+    """
+    upstream_config = _config['upstream']
+    return gerrit.SSHStream(
+        upstream_config['host'],
+        upstream_config['port'],
+        upstream_config['timeout'],
+        upstream_config['username'],
+        upstream_config['key_filename'],
+        upstream_config['keepalive']
+    )
+
+
+def get_config(yaml_file):
+    """
+    Returns a dictionary created by parsing a yaml file.
+
+    @param yaml_file - String yaml file location
+    @returns - Dictionary
+
+    """
+    if yaml_file is None:
+        yaml_file = '/etc/gerrit-python-tools/projects.yaml'
+    return config.load_config(yaml_file, default=DEFAULT_CONFIG)
 
 
 def sync_groups(_config):
@@ -114,13 +163,9 @@ def sync(yaml_file=None, groups=True, users=True, projects=True, project=None):
 
     """
     try:
-        if yaml_file is None:
-            yaml_file = '/etc/gerrit-python-tools/projects.yaml'
-        _config = config.load_config(yaml_file, default=DEFAULT_CONFIG)
+        _config = get_config(yaml_file)
 
-        logger = log.get_logger()
         start = time.time()
-
         logger.info("gerrit-sync starting...")
 
         if groups:
@@ -139,3 +184,63 @@ def sync(yaml_file=None, groups=True, users=True, projects=True, project=None):
     except Exception as e:
         logging.exception("Error occurred:")
         raise e
+
+
+def sync_daemon(yaml_file=None):
+    """
+    Not really a daemon. More of a long running loop that you would run
+    inside of a daemon. Let upstart/init scripts run this as a background
+    process.
+
+    I would use the same queue for the event stream and the worker pool,
+    but it became necessary to introduce a delay from the time an upstream
+    event is triggered to the time action is taken.
+
+    @param yaml_file - Configuration file to read.
+
+    """
+    # Get configuraion
+    _config = get_config(yaml_file)
+
+    numthreads = int(_config['daemon']['numthreads'])
+    sleep = int(_config['daemon']['sleep'])
+    delay = int(_config['daemon']['delay'])
+
+    # Register the signal handler to kill threads
+    signal.signal(signal.SIGINT, thread.stop_threads)
+    signal.signal(signal.SIGTERM, thread.stop_threads)
+
+    schedule = list()
+
+    pool = thread.WorkerPool(numthreads)
+
+    # Start listening to upstream gerrit
+    stream = get_ssh_stream(_config)
+    stream.start()
+
+    while True:
+        # Check schedule and add events to event pool
+        if len(schedule) > 0 and time.time() > schedule[0][0]:
+            t, func, args, kwargs = schedule.pop(0)
+            pool.add_task(func, *args, **kwargs)
+
+        # Check for new events from the stream
+        event = stream.get_event()
+        if not event:
+            time.sleep(sleep)
+            continue
+
+        # Do some filtering on event type and then add delay. When syncing,
+        # upstream gerrit may not have replicated to github at the time of
+        # the event reporting.
+        if event.get('type') == 'ref-updated':
+            name = event['refUpdate']['project']
+            t = time.time() + delay
+            args = []
+            kwargs = {
+                'yaml_file': yaml_file,
+                'users': False,
+                'groups': False,
+                'project': name
+            }
+            schedule.append((t, sync, args, kwargs))

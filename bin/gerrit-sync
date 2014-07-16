@@ -28,6 +28,11 @@ def get_args():
     parser.add_argument('--project', type=str, default=None,
                         help=project_help)
 
+    # Doesn't acutally start a daemon. Merely indicates gerrit-sync
+    # should be a long running process. Should be managed by upstart
+    parser.add_argument('--daemon', '-d', action="store_true",
+                        help="Run as daemon.")
+
     # Parse and return args
     args = parser.parse_args()
     return args
@@ -35,12 +40,16 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
 
-    kwargs = { 'yaml_file': args.config }
+    kwargs = {'yaml_file': args.config}
 
-    # If a specific project is indicated, only sync that project.
-    if args.project:
-        kwargs['groups'] = False
-        kwargs['users'] = False
-        kwargs['project'] = args.project
+    if not args.daemon:
+        # If a specific project is indicated, only sync that project.
+        if args.project:
+            kwargs['groups'] = False
+            kwargs['users'] = False
+            kwargs['project'] = args.project
+        sync.sync(**kwargs)
+        exit()
 
-    sync.sync(**kwargs)
+    else:
+        sync.sync_daemon(yaml_file=args.config)

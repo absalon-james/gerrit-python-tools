@@ -1,11 +1,16 @@
 import git
+import json
 import log
 import logging
 import os
 import paramiko
+import pprint
+import Queue
 import re
 import shutil
 import StringIO
+import time
+from thread import StoppableThread
 from uuid import uuid4
 from pipes import quote
 
@@ -14,6 +19,99 @@ log.get_logger('paramiko').setLevel(logging.ERROR)
 
 # Get a logger
 logger = log.get_logger()
+
+
+class SSHStream(StoppableThread):
+    """
+    Very similar to the gerrit stream at
+    https://github.com/atdt/gerrit-stream
+    Should connect to a gerrit event stream and add any events
+    to the queue.
+
+    """
+    def __init__(self, host, port, timeout, username, key_filename, keepalive):
+        """
+        Class constructor. Cleans numbers and starts a queue.
+
+        """
+        super(SSHStream, self).__init__()
+        self._queue = Queue.Queue()
+
+        self._ssh_kwargs = {
+            'username': username,
+            'port': int(port),
+            'timeout': int(timeout)
+        }
+
+        if key_filename:
+            self._ssh_kwargs['key_filename'] = key_filename
+
+        self._host = host
+        self._keepalive = int(keepalive)
+
+    def get_event(self):
+        """
+        Returns an event or None if nothing is in the queue
+
+        @returns - JSON loaded object
+
+        """
+        try:
+            json_ = self._queue.get_nowait()
+            event = json.loads(json_)
+            logger.debug("Received event:\n%s" % pprint.pformat(event))
+            return event
+        except ValueError:
+            logger.error("Error loading json:\n%s" % json_)
+        except Queue.Empty:
+            logger.debug("Nothing in event queue.")
+        return None
+
+    def run(self):
+        """
+        Run method of the thread contains two loops.
+        The outer loop reconnects to gerrit after a period of time
+            if an error occurs.
+        The inner loop reads from the ssh connection.
+        Both loops check to see if a stop is requested.
+
+        """
+        logger.info("Gerrit event stream started")
+
+        # Outer loop - Manage ssh connection to gerrit
+        while True:
+            logger.info("Connecting...")
+            client = paramiko.SSHClient()
+            client.load_system_host_keys()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            try:
+                client.connect(self._host, **(self._ssh_kwargs))
+                client.get_transport().set_keepalive(self._keepalive)
+                _, stdout, _ = client.exec_command('gerrit stream-events')
+
+                # Inner loop - Manage reading from stream
+                while not stdout.channel.exit_status_ready():
+                    if stdout.channel.recv_ready():
+                        self._queue.put(stdout.readline())
+
+                    # Check for break
+                    if self._stop.isSet():
+                        break
+
+            except Exception:
+                logger.exception("Error listening to gerrit event stream.")
+
+            finally:
+                client.close()
+
+            if self._stop.isSet():
+                logger.info("Event stream stop requested.")
+                break
+
+            # Wait 5 seconds before reconnecting. @TODO - Make configurable.
+            logger.info("Waiting %s seconds before reconnecting" % 5)
+            time.sleep(5)
 
 
 class SSH(object):
@@ -32,10 +130,9 @@ class SSH(object):
         @param key_filename - String or None
 
         """
-        port = int(port)
         self._ssh_kwargs = {
             'username': username,
-            'port': port,
+            'port': int(port),
             'timeout': int(timeout)
         }
 
