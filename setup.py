@@ -20,5 +20,5 @@ setup(
     packages=find_packages(),
     zip_safe=True,
     data_files=data_files,
-    scripts=['bin/gerrit-sync']
+    scripts=['bin/gerrit-sync', 'bin/gerrit-python-tools']
 )

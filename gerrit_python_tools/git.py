@@ -74,6 +74,7 @@ def add_remote(name, url):
     """
     args = ['git', 'remote', 'add', name, url]
     git_cmd(args)
+    logger.debug("Added remote %s: %s" % (name, url))
 
 
 def fetch(remote, refspecs):

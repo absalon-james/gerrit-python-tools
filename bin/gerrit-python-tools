@@ -1,0 +1,32 @@
+#!/usr/bin/env python
+
+import argparse
+from gerrit_python_tools import service
+
+
+def get_args():
+    """
+    Set up and use the argument parser.
+
+    @return argparse.Namespace
+
+    """
+    # Description
+    description = ("Runs service that performs various actions provided by"
+                   " gerrit-python-tools.")
+    parser = argparse.ArgumentParser(description=description)
+
+    # Configuration file location - Optional
+    default_config = '/etc/gerrit-python-tools/projects.yaml'
+    parser.add_argument('--config', type=str, default=default_config,
+                        help="Path to yaml file(default: %s" % default_config)
+
+    # Parse and return args
+    args = parser.parse_args()
+    return args
+
+if __name__ == '__main__':
+    args = get_args()
+
+    kwargs = {'yaml_file': args.config}
+    service.service(yaml_file=args.config)
