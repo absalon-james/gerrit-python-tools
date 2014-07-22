@@ -1,6 +1,47 @@
 import yaml
 
 
+def get_default_projects_config():
+    """
+    Returns the default configuration.
+    @TODO - Maybe make this static and use the copy module
+        when grabbing the config?
+
+    @return - Dictionary
+
+    """
+    return {
+        'git-config': {
+            'email': '',
+            'name': ''
+        },
+        'gerrit': {
+            'host': 'localhost',
+            'port': 29418,
+            'username': 'SomeUser',
+            'key_filename': None,
+            'timeout': 10,
+            'keepalive': 60,
+            'was-here-indicator': '### Setup by gerrit-sync ###'
+        },
+        'upstream': {
+            'host': '',
+            'port': 29418,
+            'username': 'SomeUser',
+            'key_filename': None,
+            'timeout': 10,
+            'keepalive': 60
+        },
+        'daemon': {
+            'numthreads': 5,
+            'sleep': 5,
+            'delay': 60 * 2,
+            'upstream': True,
+            'sync': True
+        }
+    }
+
+
 def merge_dict(a, b):
     """
     Update dictionary a with b. Should be recursive. The goal is to
@@ -37,7 +78,7 @@ def load_config(filename, default=None):
 
     """
     if default is None:
-        default = {}
+        default = get_default_projects_config()
 
     # Copy the default config
     config = default

@@ -4,12 +4,15 @@ import log
 import logging
 import os
 import paramiko
+import pipes
 import pprint
 import Queue
 import re
 import shutil
 import StringIO
+import subprocess
 import time
+import utils
 from thread import StoppableThread
 from uuid import uuid4
 from pipes import quote
@@ -167,6 +170,425 @@ class SSH(object):
         return retcode, output
 
 
+class Remote(object):
+    """
+    Models a gerrit remote tracking connection info and providing
+    methods to create SSH and Event streams
+
+    """
+    def __init__(self, _config):
+        """
+        Inits the remote.
+
+        @param _config - Dictionary containing keys for host, port, timeout,
+            username, key_filename, and keepalive
+
+        """
+        self.host = _config['host']
+        self.port = _config['port']
+        self.timeout = _config['timeout']
+        self.username = _config['username']
+        self.key_filename = _config['key_filename']
+        self.keepalive = _config['keepalive']
+
+    def SSHStream(self):
+        """
+        Returns a gerrit.SSHStream object
+
+        @returns - gerrit.SSHStream
+
+        """
+        return SSHStream(
+            self.host,
+            self.port,
+            self.timeout,
+            self.username,
+            self.key_filename,
+            self.keepalive
+        )
+
+    def SSH(self):
+        """
+        Returns a gerrit.SSH object
+
+        @returns - gerrit.SSH
+        """
+        return SSH(
+            self.host,
+            self.port,
+            self.timeout,
+            self.username,
+            self.key_filename
+        )
+
+
+class Approval(object):
+    """
+    Models a gerrit approval.
+    Should have fields for type, description, value, granted on and
+    granted by
+
+    """
+    def __init__(self, data):
+        """
+        Sets the data for the approval.
+
+        @param data - Dictionary containing approval data
+
+        """
+        self._data = data
+
+    @property
+    def name(self):
+        """
+        Returns the 'type' field of the approval dictionary
+
+        @returns string|None
+
+        """
+        return self._data.get('type')
+
+    @property
+    def value(self):
+        """
+        Returns the integer value of the approval(+1, +2) etc
+
+        @returns Integer
+        """
+        return int(self._data.get('value'))
+
+
+class Label(object):
+    """
+    Models a gerrit label
+
+    """
+    def __init__(self, name, min_, max_):
+        """
+        Inits the label. Add values and use the pass method to determine
+        if this label passes.
+
+        @param name - String label name(Verified, Code-Review, etc)
+        @param min_ - Integer lowest possible score
+        @param max_ - Integer highest possible score
+
+        """
+        self.name = name
+        self._min = min_
+        self._max = max_
+        self._values = []
+
+    def add_approval(self, approval):
+        """
+        Adds an approval/vote to the label
+
+        @param approval - Approval
+
+        """
+        value = approval.value
+        logger.debug("Adding value %s to label %s" % (value, self.name))
+        self._values.append(value)
+
+    def approved(self):
+        """
+        Emulates the max with block gerrit function.
+        Must have the highest positive value.
+        The lowest negative value blocks.
+        No values block.
+
+        @return Boolean
+
+        """
+        # Fail if no values
+        if not self._values:
+            return False
+
+        # Fail if we have the lowest possible value
+        if min(self._values) <= self._min:
+            return False
+
+        # Pass if we have the highest value
+        if max(self._values) >= self._max:
+            return True
+
+        # Fail otherwise
+        return False
+
+
+class CommentAdded(object):
+    """
+    Models CommentAdded type gerrit events.
+    Provides ability to send upstream if criteria is met.
+
+    """
+    def __init__(self, data):
+        """
+        Inits the object.
+
+        @param data - Dictionary
+        """
+        self._data = data
+
+    @property
+    def comment(self):
+        """
+        Returns the actual comment. Should return string or empty string.
+
+        @returns - String
+
+        """
+        return self._data.get('comment', '')
+
+    @property
+    def change_id(self):
+        """
+        Returns the change id
+
+        @returns - String
+
+        """
+        return self._data['change'].get('id')
+
+    @property
+    def patchset_id(self):
+        """
+        Returns the patchset number - @TODO Rename to patchset number
+
+        @returns - Integer
+
+        """
+        return int(self._data['patchSet'].get('number'))
+
+    @property
+    def project(self):
+        """
+        Returns the project name
+
+        @returns - String
+
+        """
+        return self._data['change']['project']
+
+    @property
+    def branch(self):
+        """
+        Returns the branch name
+
+        @returns - String
+
+        """
+        return self._data['change']['branch']
+
+    @property
+    def topic(self):
+        """
+        Returns the topic name
+
+        @returns - String
+
+        """
+        return self._data['change']['topic']
+
+    @property
+    def revision(self):
+        """
+        Returns the revision number
+
+        @returns - String
+
+        """
+        return self._data['patchSet']['revision']
+
+    def is_upstream_indicated(self):
+        """
+        Breaks the comment up into lines. The first line is examined for
+        'Upstream-Ready+1'
+
+        @returns - Boolean True for 'Upstream-Ready+1' inside the comment,
+            false otherwise.
+
+        """
+        first_line = self.comment.splitlines()[0]
+        return "Upstream-Ready+1" in first_line
+
+    def is_upstream_approved(self, approvals):
+        """
+        Examines approvals on comment added. Must meet label criteria
+        before being sent upstream.
+
+        @returns - Boolean
+
+        """
+        labels = get_labels_for_upstream()
+
+        for approval in approvals:
+            label = labels.get(approval.name)
+            if label:
+                label.add_approval(approval)
+
+        # Debugging
+        for label in labels.values():
+            if label.approved():
+                str_ = "approved"
+            else:
+                str_ = "not approved"
+            logger.debug("Change %s: Label %s is %s"
+                         % (self.change_id, label.name, str_))
+
+        return all([l.approved() for l in labels.values()])
+
+    def get_approvals(self, ssh):
+        """
+        Returns a list of approvals or the empty list for the change
+
+        @param ssh - gerrit.SSH object
+        @returns - List of approvals
+        """
+        approvals = []
+        cmd = ('gerrit query change:%s --all-approvals limit:1'
+               ' --format JSON') % self.change_id
+        try:
+            retcode, out = ssh.exec_once(cmd)
+
+            # Raise exception if nonzero retcode.
+            # @TODO - Clean this exception handling up.
+            if retcode:
+                raise Exception("Change %s: Error getting approvals"
+                                % self.change_id)
+
+            # Grab the first json object. Query returns 1+
+            json_ = utils.MultiJSON(out)[0]
+            for patchset in json_['patchSets']:
+                if int(patchset['number']) == self.patchset_id:
+                    for json_approval in patchset['approvals']:
+                        logger.debug(pprint.pformat(json_approval))
+                        approvals.append(Approval(json_approval))
+
+            logger.debug("Change %s: Approvals returned by gerrit query"
+                         % self.change_id)
+            logger.debug(pprint.pformat(json_))
+
+        except:
+            logger.exception("Change %s: Error getting approvals"
+                             % self.change_id)
+
+        # Return approvals or empy list
+        return approvals
+
+    def send_upstream(self, downstream, upstream, conf):
+        """
+        Sends the change indicated by the comment upstream.
+
+        @param downstream - gerrit.Remote downstream object
+        @param upstream - gerrit.Remote upstream object
+        @param conf - Dictionary configuration object
+
+        """
+        ssh = downstream.SSH()
+
+        # Check to see if comment indicates a change is upstream ready
+        if not self.is_upstream_indicated():
+            logger.debug("Change %s: Upstream not indicated" % self.change_id)
+            return
+
+        # Grab all of the approvals
+        approvals = self.get_approvals(downstream.SSH())
+
+        # Check to see if comment has necessary approvals.
+        if not self.is_upstream_approved(approvals):
+            msg = ("Could not send to upstream: One or more labels"
+                   " not approved.")
+            logger.debug("Change %s: %s" % (self.change_id, msg))
+            ssh.exec_once('gerrit review -m %s %s'
+                          % (pipes.quote(msg), self.revision))
+            return
+
+        # Do some git stuffs to push upstream
+        logger.debug("Change %s: Sending to upstream" % self.change_id)
+
+        repo_dir = '~/tmp'
+        repo_dir = os.path.expanduser(repo_dir)
+        repo_dir = os.path.abspath(repo_dir)
+
+        # Add uuid, want a unique directory here
+        uuid_dir = str(uuid4())
+        repo_dir = os.path.join(repo_dir, uuid_dir)
+
+        # Make Empty directory - We want this to stop and fail on OSError
+        if not os.path.isdir(repo_dir):
+            os.makedirs(repo_dir)
+            logger.debug(
+                "Change %s: Created directory %s" % (self.change_id, repo_dir)
+            )
+
+        # Save the current working directory
+        old_cwd = os.getcwd()
+
+        try:
+            # Change to newly created directory.
+            os.chdir(repo_dir)
+
+            # Init the cwd
+            git.init()
+
+            # Add the remotes for upstream and downstream
+            remote_url = "ssh://%s@%s:%s/%s"
+            git.add_remote('downstream', remote_url % (downstream.username,
+                                                       downstream.host,
+                                                       downstream.port,
+                                                       self.project))
+
+            git.add_remote('upstream', remote_url % (upstream.username,
+                                                     upstream.host,
+                                                     upstream.port,
+                                                     self.project))
+
+            try:
+
+                git.set_config('user.email', conf['git-config']['email'])
+                git.set_config('user.name', conf['git-config']['name'])
+
+                args = ['git', 'review', '-r', 'downstream', '-d',
+                        '%s,%s' % (self.change_id, self.patchset_id)]
+                logger.debug('Change %s: running: %s'
+                             % (self.change_id, ' '.join(args)))
+                cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT)
+                out = cmd.stdout.read()
+                logger.debug("Change %s: %s" % (self.change_id, out))
+
+                args = ['git', 'review', '-r', 'upstream', self.branch,
+                        '-t', self.topic]
+                logger.debug('Change %s: running: %s'
+                             % (self.change_id, ' '.join(args)))
+                cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT)
+                out = cmd.stdout.read()
+                logger.debug("Change %s: %s" % (self.change_id, out))
+
+                upstream_url = ("https://%s/#q,%s,n,z"
+                                % (upstream.host, self.change_id))
+                msg = 'Sent to upstream: %s' % (upstream_url)
+                ssh.exec_once('gerrit review -m %s %s'
+                              % (pipes.quote(msg), self.revision))
+
+            except subprocess.CalledProcessError:
+                out = cmd.stdout.read()
+                msg = "<pre>Could not send to upstream:\n%s</pre>" % out
+                ssh.exec_once('gerrit review -m %s %s'
+                              % (pipes.quote(msg), self.revision))
+                logger.error("Change %s: Unable to send to upstream"
+                             % self.change_id)
+                logger.error("Change %s: %s" % (self.change_id, out))
+
+        finally:
+            # Change to old current working directory
+            os.chdir(old_cwd)
+
+            # Attempt to clean up created directory
+            shutil.rmtree(repo_dir)
+
+
 class Group(object):
     """
     Class that provides some simple accessor methods to a dictionary
@@ -278,19 +700,21 @@ class Group(object):
         retcode, __ = ssh.exec_once(self.get_ls())
         return True if not retcode else False
 
-    def present(self, ssh):
+    def present(self, remote):
         """
         Makes sure this group is present on gerrit. First checks to see
         if this group exists. If it does not exist already, then this method
         will attempt to create it.
 
-        @param ssh - SSH object
+        @param remote - gerrit.Remote object
         @return True if the group exists or was created, False otherwise.
 
         """
         msg = "Group %s: Ensuring present." % self.name
         logger.info(msg)
         print msg
+
+        ssh = remote.SSH()
 
         # If the group already exists, do nothing.
         if self.exists(ssh):
@@ -421,20 +845,22 @@ k
             quote(self.username)
         )
 
-    def present(self, ssh):
+    def present(self, remote):
         """
         Attempts to create this user. If the return code of that operation
         is 0 then this method returns True. If the return code of that
         operation is 1 and 'already exists' is in the output, then this
         method returns true. Returns false otherwise.
 
-        @param ssh = Gerrit.SSH object
+        @param remote = gerrit.Remote object
         @returns Boolean True for created or already exists. False otherwise.
 
         """
         msg = "User %s: Ensuring present." % self.username
         logger.info(msg)
         print msg
+
+        ssh = remote.SSH()
 
         retcode, out = ssh.exec_once(self.get_create())
         if not retcode:
@@ -568,11 +994,12 @@ class Project(object):
             cmd = 'gerrit create-project %s' % quote(self.name)
             retcode, text = ssh.exec_once(cmd)
 
-    def _config(self, gerrit_config, groups):
+    def _config(self, remote, conf, groups):
         """
         Builds the groups file and project.config file for a project.
 
-        @param gerrit_config - Dict Gerrit section of configuration
+        @param remote - gerrit.Remote object
+        @param conf - Dict containing git config information
         @param groups - List of groups
 
         """
@@ -599,7 +1026,7 @@ class Project(object):
         # Save the current working directory
         old_cwd = os.getcwd()
 
-        indicator = gerrit_config['was-here-indicator']
+        indicator = conf['gerrit']['was-here-indicator']
 
         origin = 'origin'
 
@@ -612,9 +1039,9 @@ class Project(object):
 
             # Add remote origin
             ssh_url = 'ssh://%s@%s:%s/%s' % (
-                gerrit_config['username'],
-                gerrit_config['host'],
-                gerrit_config['port'],
+                remote.username,
+                remote.host,
+                remote.port,
                 self.name
             )
 
@@ -654,10 +1081,10 @@ class Project(object):
 
             if repo_modified:
                 # Git config user.email
-                git.set_config('user.email', gerrit_config['git-config-email'])
+                git.set_config('user.email', conf['git-config']['email'])
 
                 # Git config user.name
-                git.set_config('user.name', gerrit_config['git-config-name'])
+                git.set_config('user.name', conf['git-config']['name'])
 
                 # Add groups and project.config
                 git.add(['groups', 'project.config'])
@@ -683,6 +1110,12 @@ class Project(object):
             shutil.rmtree(repo_dir)
 
     def ref_kwargs(self):
+        """
+        Returns dictionary of ref keyword arguments
+
+        @returns - Dictionary
+
+        """
         kwargs = {}
         if self.heads:
             kwargs['heads'] = True
@@ -690,11 +1123,11 @@ class Project(object):
             kwargs['tags'] = True
         return kwargs
 
-    def _sync(self, gerrit_config):
+    def _sync(self, remote):
         """
         Pushes all normal branches from a source repo to gerrit.
 
-        @param gerrit_config - Dictionary gerrit portion of configuration.
+        @param remote - gerrit.Remote object
 
         """
         # Only sync if source repo is provided.
@@ -738,9 +1171,9 @@ class Project(object):
 
             # Add remote named gerrit
             ssh_url = 'ssh://%s@%s:%s/%s' % (
-                gerrit_config['username'],
-                gerrit_config['host'],
-                gerrit_config['port'],
+                remote.username,
+                remote.host,
+                remote.port,
                 self.name
             )
             git.add_remote('gerrit', ssh_url)
@@ -795,45 +1228,48 @@ class Project(object):
             # Attempt to clean up created directory
             shutil.rmtree(repo_dir)
 
-    def ensure(self, ssh, gerrit_config, groups):
+    def ensure(self, remote, conf):
         """
         Ensures this project is present on gerrit.
         Can optionally create the project if it does not exits.
         Can optionally specify a configuration for the project.
         Can optionally sync the project with another repo.
 
-        @param ssh - gerrit.SSH object
-        @param gerrit_config - Dictionary that configures talking
-            to gerrit/git
-        @param groups - List of gerrit.Group objects for building groups
-            file with config.
+        @param remote - gerrit.Remote object
+        @param conf - Configuration dictionary
 
         """
         msg = "Project %s: Ensuring present." % self.name
         logger.info(msg)
         print msg
 
+        ssh = remote.SSH()
+
+        # Get list of groups for building groups file
+        groups = get_groups(remote)
+
         # Create Project if needed
         self._create(ssh)
 
         # Create submit a configuration if needed
-        self._config(gerrit_config, groups)
+        self._config(remote, conf, groups)
 
         # Sync with source repo if needed
-        self._sync(gerrit_config)
+        self._sync(remote)
 
 
-def get_groups(ssh):
+def get_groups(remote):
     """
     Executes a gerrit ls-groups --verbose command and parses output
     into groups. Returns a list of groups.
 
-    @param ssh - gerrit.SSH object
+    @param remote - gerrit.Remote object
     @reurns list
 
     """
     cmd = 'gerrit ls-groups --verbose'
     groups = []
+    ssh = remote.SSH()
 
     # Need a retcode of 0 for success
     retcode, out = ssh.exec_once(cmd)
@@ -919,3 +1355,17 @@ def file_contains(_file, indicator):
     with open(_file, 'r') as f:
         contents = f.read()
     return indicator in contents
+
+
+def get_labels_for_upstream():
+    """
+    @TODO Make this something that comes from config
+
+    @returns Dictionary of labels keyed by name
+    """
+    return {
+        'Code-Review': Label('Code-Review', -2, 2),
+        'Verified': Label('Verified', -2, 2),
+        'Workflow': Label('Workflow', -1, 1),
+        'Upstream-Ready': Label('Upstream-Ready', -1, 1)
+    }
