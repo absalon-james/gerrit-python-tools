@@ -544,25 +544,26 @@ class CommentAdded(object):
                                                      self.project))
 
             try:
+                env = get_review_env()
 
                 git.set_config('user.email', conf['git-config']['email'])
                 git.set_config('user.name', conf['git-config']['name'])
 
-                args = ['git', 'review', '-r', 'downstream', '-d',
+                args = ['git-review', '-r', 'downstream', '-d',
                         '%s,%s' % (self.change_id, self.patchset_id)]
                 logger.debug('Change %s: running: %s'
                              % (self.change_id, ' '.join(args)))
                 cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT)
+                                       stderr=subprocess.STDOUT, env=env)
                 out = cmd.stdout.read()
                 logger.debug("Change %s: %s" % (self.change_id, out))
 
-                args = ['git', 'review', '-r', 'upstream', self.branch,
+                args = ['git-review', '-r', 'upstream', self.branch,
                         '-t', self.topic]
                 logger.debug('Change %s: running: %s'
                              % (self.change_id, ' '.join(args)))
                 cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT)
+                                       stderr=subprocess.STDOUT, env=env)
                 out = cmd.stdout.read()
                 logger.debug("Change %s: %s" % (self.change_id, out))
 
@@ -1369,3 +1370,16 @@ def get_labels_for_upstream():
         'Workflow': Label('Workflow', -1, 1),
         'Upstream-Ready': Label('Upstream-Ready', -1, 1)
     }
+
+
+def get_review_env():
+    """
+    Returns an environment to send to subprocess.Popen when using
+    git review.
+
+    @returns - Env
+    """
+    env = os.environ.copy()
+    env['PATH'] = env.get('PATH', '') + ':/usr/local/bin/'
+    logger.debug("PAth: %s" % env['PATH'])
+    return env
