@@ -21,8 +21,7 @@ def get_default_projects_config():
             'username': 'SomeUser',
             'key_filename': None,
             'timeout': 10,
-            'keepalive': 60,
-            'was-here-indicator': '### Setup by gerrit-sync ###'
+            'keepalive': 60
         },
         'upstream': {
             'host': '',

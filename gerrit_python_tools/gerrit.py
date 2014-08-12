@@ -1,4 +1,5 @@
 import git
+import hashlib
 import json
 import log
 import logging
@@ -542,45 +543,55 @@ class CommentAdded(object):
                                                      upstream.host,
                                                      upstream.port,
                                                      self.project))
-
             try:
                 env = get_review_env()
 
+                # Set committer info
                 git.set_config('user.email', conf['git-config']['email'])
                 git.set_config('user.name', conf['git-config']['name'])
 
+                # Download  specific change to local
                 args = ['git-review', '-r', 'downstream', '-d',
                         '%s,%s' % (self.change_id, self.patchset_id)]
                 logger.debug('Change %s: running: %s'
                              % (self.change_id, ' '.join(args)))
-                cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, env=env)
-                out = cmd.stdout.read()
+                out = subprocess.check_output(args,
+                                              stderr=subprocess.STDOUT,
+                                              env=env)
                 logger.debug("Change %s: %s" % (self.change_id, out))
 
+                # Send downloaded change to upstream
                 args = ['git-review', '-r', 'upstream', self.branch,
                         '-t', self.topic]
                 logger.debug('Change %s: running: %s'
                              % (self.change_id, ' '.join(args)))
-                cmd = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, env=env)
-                out = cmd.stdout.read()
+                out = subprocess.check_output(args,
+                                              stderr=subprocess.STDOUT,
+                                              env=env)
                 logger.debug("Change %s: %s" % (self.change_id, out))
 
+                # Send comment to downstream gerrit with link to change in
+                # upstream gerrit
                 upstream_url = ("https://%s/#q,%s,n,z"
                                 % (upstream.host, self.change_id))
                 msg = 'Sent to upstream: %s' % (upstream_url)
                 ssh.exec_once('gerrit review -m %s %s'
                               % (pipes.quote(msg), self.revision))
 
-            except subprocess.CalledProcessError:
-                out = cmd.stdout.read()
-                msg = "<pre>Could not send to upstream:\n%s</pre>" % out
+            except subprocess.CalledProcessError as e:
+                msg = "Could not send to upstream:\n%s" % e.output
                 ssh.exec_once('gerrit review -m %s %s'
                               % (pipes.quote(msg), self.revision))
                 logger.error("Change %s: Unable to send to upstream"
                              % self.change_id)
                 logger.error("Change %s: %s" % (self.change_id, out))
+
+            except Exception:
+                msg = 'Could not send to upstream: Error running git-review'
+                ssh.exec_once('gerrit review -m %s %s'
+                              % (pipes.quote(msg), self.revision))
+                logger.exception("Change %s: Unable to send to upstream"
+                                 % self.change_id)
 
         finally:
             # Change to old current working directory
@@ -1027,8 +1038,6 @@ class Project(object):
         # Save the current working directory
         old_cwd = os.getcwd()
 
-        indicator = conf['gerrit']['was-here-indicator']
-
         origin = 'origin'
 
         try:
@@ -1055,32 +1064,40 @@ class Project(object):
             # Checkout refs/meta/config
             git.checkout_branch('meta/config')
 
-            repo_modified = False
-            # Update groups file
-            # Check to see if groups was already touched by this tool.
-            _file = os.path.join(repo_dir, 'groups')
-            if not file_contains(_file, indicator):
-                logger.info("Project %s: writing groups file" % self.name)
-                # Create entire new groups file
-                contents = groups_file_contents(groups, indicator)
-                with open(_file, 'w') as f:
-                    f.write(contents)
-                repo_modified = True
-
-            # Update project.config file
-            # Check to see if this file was already touched by this tool.
+            # Get md5 of existing config
             _file = os.path.join(repo_dir, 'project.config')
-            if not file_contains(_file, indicator):
-                logger.info(
-                    "Project %s: Writing project.config file" % self.name
+            with open(_file, 'r') as f:
+                contents = f.read()
+            existing_md5 = hashlib.md5(contents).hexdigest()
+
+            # Get md5 of new config
+            with open(self.config, 'r') as f:
+                contents = f.read()
+            new_md5 = hashlib.md5(contents).hexdigest()
+
+            msg = "Project %s: Md5 comparision\n%s\n%s"
+            msg = msg % (self.name, existing_md5, new_md5)
+            logger.debug(msg)
+            print msg
+
+            # Only alter if checksums do not match
+            if existing_md5 != new_md5:
+
+                logger.debug(
+                    "Project %s: config md5's are different." % self.name
                 )
-                # Create the new project.config file
-                contents = project_config_contents(self.config, indicator)
+
+                # Update project.config file
+                _file = os.path.join(repo_dir, 'project.config')
                 with open(_file, 'w') as f:
                     f.write(contents)
-                repo_modified = True
 
-            if repo_modified:
+                # Update groups file
+                group_contents = groups_file_contents(groups)
+                _file = os.path.join(repo_dir, 'groups')
+                with open(_file, 'w') as f:
+                    f.write(group_contents)
+
                 # Git config user.email
                 git.set_config('user.email', conf['git-config']['email'])
 
@@ -1098,8 +1115,7 @@ class Project(object):
                 logger.info("Project %s: pushed configuration." % self.name)
 
             else:
-                msg = "Project %s: groups and project.config already modified." \
-                      % self.name
+                msg = "Project %s: config unchanged." % self.name
                 logger.info(msg)
                 print msg
 
@@ -1301,61 +1317,19 @@ def get_groups(remote):
     return groups
 
 
-def groups_file_contents(groups, indicator=""):
+def groups_file_contents(groups):
     """
     Creates the contents of a groups file to be saved with a project's
     configuration.
 
     @param groups - List of gerrit.Group objects
-    @param indicator - String to prepend to beginning of contents
-        indicating this tool was run.
     @return String
 
     """
     _buffer = StringIO.StringIO()
-    if len(indicator) > 0:
-        _buffer.write(indicator)
-        _buffer.write("\n")
     for g in groups:
         _buffer.write("%s\t%s\n" % (g.uuid, g.name))
     return _buffer.getvalue()
-
-
-def project_config_contents(source_file, indicator=""):
-    """
-    Creates the contents of a project configuration file. Prepends
-    a "I was here" to the beginning of the file.
-
-    @param source_file - String file name
-    @param indicator - String indicator
-    @return String
-    """
-    _buffer = StringIO.StringIO()
-    if len(indicator) > 0:
-        _buffer.write(indicator)
-        _buffer.write("\n")
-    with open(source_file, 'r') as f:
-        _buffer.write(f.read())
-    return _buffer.getvalue()
-
-
-def file_contains(_file, indicator):
-    """
-    Checks if indicator is in file.
-
-    @param _file - String file name
-    @param indicator - String to check for
-    @return Boolean
-
-    """
-    # Check if file exists first
-    if not os.path.isfile(_file):
-        return False
-
-    # Read contents
-    with open(_file, 'r') as f:
-        contents = f.read()
-    return indicator in contents
 
 
 def get_labels_for_upstream():
