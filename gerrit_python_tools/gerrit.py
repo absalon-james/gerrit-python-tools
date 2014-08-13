@@ -1066,8 +1066,12 @@ class Project(object):
 
             # Get md5 of existing config
             _file = os.path.join(repo_dir, 'project.config')
-            with open(_file, 'r') as f:
-                contents = f.read()
+            contents = ''
+            try:
+                with open(_file, 'r') as f:
+                    contents = f.read()
+            except IOError:
+                pass
             existing_md5 = hashlib.md5(contents).hexdigest()
 
             # Get md5 of new config
