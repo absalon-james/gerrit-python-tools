@@ -412,7 +412,7 @@ class CommentAdded(object):
         first_line = self.comment.splitlines()[0]
         return "Upstream-Ready+1" in first_line
 
-    def is_upstream_approved(self, approvals):
+    def is_upstream_approved(self, approvals, conf):
         """
         Examines approvals on comment added. Must meet label criteria
         before being sent upstream.
@@ -420,7 +420,7 @@ class CommentAdded(object):
         @returns - Boolean
 
         """
-        labels = get_labels_for_upstream()
+        labels = get_labels_for_upstream(conf)
 
         for approval in approvals:
             label = labels.get(approval.name)
@@ -496,7 +496,7 @@ class CommentAdded(object):
         approvals = self.get_approvals(downstream.SSH())
 
         # Check to see if comment has necessary approvals.
-        if not self.is_upstream_approved(approvals):
+        if not self.is_upstream_approved(approvals, conf):
             msg = ("Could not send to upstream: One or more labels"
                    " not approved.")
             logger.debug("Change %s: %s" % (self.change_id, msg))
@@ -887,7 +887,7 @@ k
             return True
 
         msg = "User %s: Unable to create - %s" % (self.username, out)
-        log.error(msg)
+        logger.error(msg)
         print msg
         return False
 
@@ -1336,18 +1336,22 @@ def groups_file_contents(groups):
     return _buffer.getvalue()
 
 
-def get_labels_for_upstream():
+def get_labels_for_upstream(conf):
     """
-    @TODO Make this something that comes from config
+    Creates dictionary of label objects loaded from the config dictionary.
 
     @returns Dictionary of labels keyed by name
     """
-    return {
-        'Code-Review': Label('Code-Review', -2, 2),
-        'Verified': Label('Verified', -2, 2),
-        'Workflow': Label('Workflow', -1, 1),
-        'Upstream-Ready': Label('Upstream-Ready', -1, 1)
-    }
+    label_dicts = conf.get('labels', [])
+    label_objs = {}
+    for l in label_dicts:
+        label = Label(l['name'], int(l['min']), int(l['max']))
+        label_objs.update({
+            l['name']: label
+        })
+        logger.debug("Adding label %s with min %s and max %s"
+                     % (label.name, label._min, label._max))
+    return label_objs
 
 
 def get_review_env():

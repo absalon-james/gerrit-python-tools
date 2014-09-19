@@ -37,7 +37,24 @@ def get_default_projects_config():
             'delay': 60 * 2,
             'upstream': True,
             'sync': True
-        }
+        },
+        'labels': [
+            {
+                'name': 'Code-Review',
+                'min': -2,
+                'max': 2
+            },
+            {
+                'name': 'Verified',
+                'min': -2,
+                'max': 2
+            },
+            {
+                'name': 'Upstream-Ready',
+                'min': -1,
+                'max': 1
+            }
+        ]
     }
 
 
