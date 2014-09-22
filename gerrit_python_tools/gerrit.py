@@ -400,6 +400,36 @@ class CommentAdded(object):
         """
         return self._data['patchSet']['revision']
 
+    @property
+    def change_owner_username(self):
+        """
+        Returns the gerrit username of the author.
+
+        @returns - String | None
+
+        """
+        return self._data['change']['owner'].get('username')
+
+    @property
+    def change_owner_name(self):
+        """
+        Returns the full name of the author.
+
+        @returns - String | None
+
+        """
+        return self._data['change']['owner'].get('name')
+
+    @property
+    def change_owner_email(self):
+        """
+        Returns the email address of the author
+
+        @returns - String | None
+
+        """
+        return self._data['change']['owner'].get('email')
+
     def is_upstream_indicated(self):
         """
         Breaks the comment up into lines. The first line is examined for
@@ -539,16 +569,34 @@ class CommentAdded(object):
                                                        downstream.port,
                                                        self.project))
 
-            git.add_remote('upstream', remote_url % (upstream.username,
+            # Figure out what user we will pose as
+            # This every upstream user sharing the same key is kinda shady.
+            # Default back to the configured user if username doesnt exist.
+            # should fail in this case
+            username = self.change_owner_username
+            name = self.change_owner_name
+            email = self.change_owner_email
+            if not username:
+                logger.debug("Change %s: Unable to use author credentials."
+                             " Defaulting to configured credentials."
+                             % self.change_id)
+                username = upstream.username
+                name = conf['git-config']['name']
+                email = conf['git-config']['email']
+
+            git.add_remote('upstream', remote_url % (username,
                                                      upstream.host,
                                                      upstream.port,
                                                      self.project))
+            logger.debug('Change %s: Sending upstream as '
+                         'username %s, email %s, name %s'
+                         % (self.change_id, username, email, name))
             try:
                 env = get_review_env()
 
                 # Set committer info
-                git.set_config('user.email', conf['git-config']['email'])
-                git.set_config('user.name', conf['git-config']['name'])
+                git.set_config('user.email', email)
+                git.set_config('user.name', name)
 
                 # Download  specific change to local
                 args = ['git-review', '-r', 'downstream', '-d',
