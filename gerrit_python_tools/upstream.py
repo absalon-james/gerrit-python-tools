@@ -26,8 +26,8 @@ def send_upstream(yaml_file, event):
         downstream = gerrit.Remote(_config['gerrit'])
         upstream = gerrit.Remote(_config['upstream'])
 
-        event_obj = gerrit.CommentAdded(event)
-        event_obj.send_upstream(downstream, upstream, _config)
+        event_obj = gerrit.CommentAdded(event, _config)
+        event_obj.send_upstream(downstream, upstream)
 
         duration = time.time() - start
         msg = "send upstream run finished in %s seconds." % duration

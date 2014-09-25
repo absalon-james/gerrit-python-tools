@@ -322,13 +322,15 @@ class CommentAdded(object):
     Provides ability to send upstream if criteria is met.
 
     """
-    def __init__(self, data):
+    def __init__(self, data, conf):
         """
         Inits the object.
 
         @param data - Dictionary
+        @param conf - Dictionary
         """
         self._data = data
+        self._conf = conf
 
     @property
     def comment(self):
@@ -430,6 +432,39 @@ class CommentAdded(object):
         """
         return self._data['change']['owner'].get('email')
 
+    def is_upstream_project(self):
+        """
+        Returns whether or not this project is an upstream project.
+        An upstream project is a project that exists in conf and is also
+        designated as an upstream project.
+
+        @returns Boolean
+
+        """
+        project = None
+
+        # Iterate over projects in config looking for one with a matching name
+        for p in self._conf.get('projects', []):
+            if p.get('name') == self.project:
+                project = Project(p)
+                break
+
+        # If project not set, then project wasn't found
+        if not project:
+            logger.debug("Change %s: Project %s not in configuration."
+                         % (self.change_id, self.project))
+            return False
+
+        # Check upstream designation
+        if not project.upstream:
+            logger.debug("Change %s: Project %s not designated as upstream."
+                         % (self.change_id, self.project))
+            return False
+
+        # If the project has been found and if the project is marked as
+        # upstream, then return True
+        return True
+
     def is_upstream_indicated(self):
         """
         Breaks the comment up into lines. The first line is examined for
@@ -439,18 +474,21 @@ class CommentAdded(object):
             false otherwise.
 
         """
+        trigger = self._conf['upstream']['trigger']
+        logger.debug("Change %s: Trigger '%s'" % (self.change_id, trigger))
         first_line = self.comment.splitlines()[0]
-        return "Upstream-Ready+1" in first_line
+        return trigger in first_line
 
-    def is_upstream_approved(self, approvals, conf):
+    def is_upstream_approved(self, approvals):
         """
         Examines approvals on comment added. Must meet label criteria
         before being sent upstream.
 
+        @param approvals - List of approvals
         @returns - Boolean
 
         """
-        labels = get_labels_for_upstream(conf)
+        labels = get_labels_for_upstream(self._conf)
 
         for approval in approvals:
             label = labels.get(approval.name)
@@ -506,15 +544,18 @@ class CommentAdded(object):
         # Return approvals or empy list
         return approvals
 
-    def send_upstream(self, downstream, upstream, conf):
+    def send_upstream(self, downstream, upstream):
         """
         Sends the change indicated by the comment upstream.
 
         @param downstream - gerrit.Remote downstream object
         @param upstream - gerrit.Remote upstream object
-        @param conf - Dictionary configuration object
 
         """
+        # Check if upstream project before doing anything.
+        if not self.is_upstream_project():
+            return
+
         ssh = downstream.SSH()
 
         # Check to see if comment indicates a change is upstream ready
@@ -526,7 +567,7 @@ class CommentAdded(object):
         approvals = self.get_approvals(downstream.SSH())
 
         # Check to see if comment has necessary approvals.
-        if not self.is_upstream_approved(approvals, conf):
+        if not self.is_upstream_approved(approvals):
             msg = ("Could not send to upstream: One or more labels"
                    " not approved.")
             logger.debug("Change %s: %s" % (self.change_id, msg))
@@ -581,8 +622,8 @@ class CommentAdded(object):
                              " Defaulting to configured credentials."
                              % self.change_id)
                 username = upstream.username
-                name = conf['git-config']['name']
-                email = conf['git-config']['email']
+                name = self._conf['git-config']['name']
+                email = self._conf['git-config']['email']
 
             git.add_remote('upstream', remote_url % (username,
                                                      upstream.host,
@@ -1042,6 +1083,17 @@ class Project(object):
 
         """
         return self._data.get('force', True)
+
+    @property
+    def upstream(self):
+        """
+        Returns whether or not this project is designated as an upstream
+        project.
+
+        @returns Boolean
+
+        """
+        return self._data.get('upstream', False)
 
     def _create(self, ssh):
         """

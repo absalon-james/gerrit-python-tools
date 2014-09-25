@@ -11,6 +11,7 @@ upstream:
   username: YourUserName
   timeout: 10
   keepalive: 10
+  trigger: Verified+2
 
 daemon:
   sleep: 5
@@ -50,7 +51,13 @@ projects:
   - name: All-Projects
     config: /etc/gerrit-python-tools/acls/All-Projects.config
 
-  - name: project-1
-    config: /etc/gerrit-python-tools/acls/project-1..config
+  - name: upstream-project-1
+    config: /etc/gerrit-python-tools/acls/project-1.config
     create: True
     source: 'https://github.com/YourUserName/project-1.git'
+    upstream: True
+
+  - name: downstream-project-2
+    config: /etc/gerrit-python-tools/acls/project-2.config
+    create: True
+    source: 'https://github.com/YourUserName/project-2.git'

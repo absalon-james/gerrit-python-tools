@@ -29,7 +29,8 @@ def get_default_projects_config():
             'username': 'SomeUser',
             'key_filename': None,
             'timeout': 10,
-            'keepalive': 60
+            'keepalive': 60,
+            'trigger': 'Verified+2'
         },
         'daemon': {
             'numthreads': 5,
