@@ -514,8 +514,9 @@ class CommentAdded(object):
         @returns - List of approvals
         """
         approvals = []
-        cmd = ('gerrit query change:%s --all-approvals limit:1'
-               ' --format JSON') % self.change_id
+        cmd = ('gerrit query change:%s branch:%s project:%s'
+               ' --all-approvals limit:1 --format JSON')
+        cmd = cmd % (self.change_id, self.branch, self.project)
         try:
             retcode, out = ssh.exec_once(cmd)
 
@@ -543,6 +544,40 @@ class CommentAdded(object):
 
         # Return approvals or empy list
         return approvals
+
+    def get_upstream_url(self, upstream):
+        """
+        Attempts to get the upstream url for this change.
+        This change should have already been pushed upstream.
+
+        @param upstream - gerrit.Remote
+        @returns - None | String. Url for success, None otherwise
+
+        """
+        ssh = upstream.SSH()
+        cmd = 'gerrit query change:%s branch:%s project:%s --format JSON'
+        cmd = cmd % (self.change_id, self.branch, self.project)
+        url = None
+        try:
+            retcode, out = ssh.exec_once(cmd)
+            # Check retcode
+            if retcode:
+                return None
+
+            if not retcode:
+                json_ = utils.MultiJSON(out)
+                # Check that a match was found. A stats object will always
+                # be sent. need length > 1
+                if len(json_) < 2:
+                    return None
+                url = json_[0]['url']
+        except Exception:
+            logger.exception("Exception getting upstream url")
+
+        # Backup url
+        if not url:
+            url = ("https://%s/#q,%s,n,z" % (upstream.host, self.change_id))
+        return url
 
     def send_upstream(self, downstream, upstream):
         """
@@ -659,11 +694,11 @@ class CommentAdded(object):
                                               env=env)
                 logger.debug("Change %s: %s" % (self.change_id, out))
 
+                upstream_url = self.get_upstream_url(upstream)
+
+                msg = 'Sent to upstream: %s' % (upstream_url)
                 # Send comment to downstream gerrit with link to change in
                 # upstream gerrit
-                upstream_url = ("https://%s/#q,%s,n,z"
-                                % (upstream.host, self.change_id))
-                msg = 'Sent to upstream: %s' % (upstream_url)
                 ssh.exec_once('gerrit review -m %s %s'
                               % (pipes.quote(msg), self.revision))
 

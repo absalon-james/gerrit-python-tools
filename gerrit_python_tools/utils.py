@@ -38,3 +38,12 @@ class MultiJSON(object):
         """
         for obj in self.objects:
             yield obj
+
+    def __len__(self):
+        """
+        Return the number of json objects.
+
+        @return - Integer
+
+        """
+        return len(self.objects)
