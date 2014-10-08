@@ -1,5 +1,5 @@
 """
 Random metadata info pieces. More should be added here...Probably
 """
-version = "0.1.8"
+version = "0.1.9"
 license = "MIT"

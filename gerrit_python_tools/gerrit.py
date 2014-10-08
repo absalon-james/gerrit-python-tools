@@ -488,7 +488,7 @@ class CommentAdded(object):
         @returns - Boolean
 
         """
-        labels = get_labels_for_upstream(self._conf)
+        labels = get_labels_for_upstream(self._conf, self.project)
 
         for approval in approvals:
             label = labels.get(approval.name)
@@ -1471,13 +1471,27 @@ def groups_file_contents(groups):
     return _buffer.getvalue()
 
 
-def get_labels_for_upstream(conf):
+def get_labels_for_upstream(conf, project_name):
     """
     Creates dictionary of label objects loaded from the config dictionary.
 
+    @param conf - Dictionary configuration
+    @param project_name - String name of a project
     @returns Dictionary of labels keyed by name
+
     """
-    label_dicts = conf.get('labels', [])
+    label_dicts = None
+
+    # Look for project specific upstream labels.
+    project_dicts = conf.get('projects', [])
+    for project_dict in project_dicts:
+        if project_dict.get('name') == project_name:
+            label_dicts = project_dict.get('upstream-labels', None)
+            break
+
+    if label_dicts is None:
+        label_dicts = conf.get('upstream-labels', [])
+
     label_objs = {}
     for l in label_dicts:
         label = Label(l['name'], int(l['min']), int(l['max']))

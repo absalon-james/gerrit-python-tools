@@ -39,7 +39,7 @@ def get_default_projects_config():
             'upstream': True,
             'sync': True
         },
-        'labels': [
+        'upstream-labels': [
             {
                 'name': 'Code-Review',
                 'min': -2,

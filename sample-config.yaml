@@ -18,7 +18,8 @@ daemon:
   delay: 120
   numthreads: 5
 
-labels:
+# Labels that act as gates before sending to upstream
+upstream-labels:
   - name: Code-Review
     min: -2
     max: 2
@@ -61,3 +62,13 @@ projects:
     config: /etc/gerrit-python-tools/acls/project-2.config
     create: True
     source: 'https://github.com/YourUserName/project-2.git'
+
+    # This is an example of how to specify upstream gating labels
+    # per project.
+  - name: upstream-project-3-special-labels
+    create: True
+    source: 'https://github.com/YourUserName/project-3.git'
+    upstream-labels:
+      - name: Special-Label
+        min: -2
+        max: 2
