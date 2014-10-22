@@ -3,6 +3,7 @@ import gerrit
 import log
 import logging
 import time
+import traceback
 
 
 logger = log.get_logger()
@@ -18,9 +19,13 @@ def sync_groups(_config):
     """
     remote = gerrit.Remote(_config['gerrit'])
     for group_data in _config.get('groups', []):
-        group = gerrit.Group(group_data)
-        group.present(remote)
-        print ""
+        try:
+            group = gerrit.Group(group_data)
+            group.present(remote)
+            print ""
+        except:
+            logger.exception("Unable to sync group")
+            traceback.print_exc()
 
 
 def sync_users(_config):
@@ -33,9 +38,13 @@ def sync_users(_config):
     """
     remote = gerrit.Remote(_config['gerrit'])
     for user_data in _config.get('users', []):
-        user = gerrit.User(user_data)
-        user.present(remote)
-        print ""
+        try:
+            user = gerrit.User(user_data)
+            user.present(remote)
+            print ""
+        except:
+            logger.exception("Unable to sync user")
+            traceback.print_exc()
 
 
 def sync_projects(_config, specific=None):
@@ -63,8 +72,12 @@ def sync_projects(_config, specific=None):
             print msg
 
     for p in projects:
-        p.ensure(remote, _config)
-        print ""
+        try:
+            p.ensure(remote, _config)
+            print ""
+        except:
+            logger.exception("Unable to sync project")
+            traceback.print_exc()
 
 
 def sync(yaml_file=None, groups=True, users=True, projects=True, project=None):
