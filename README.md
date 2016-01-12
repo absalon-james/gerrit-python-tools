@@ -213,6 +213,7 @@ The following table describes the properties available per project:
 | create          | Whether or not to create the project if it does not exist. Defaults to false |
 | config          | Optional. Location of file that should be the project's project.config file. Used for access control to the project. |
 | source          | Required. Location of the source repo that will be the basis of the gerrit project. Syncs will come from this location. |
+| preserve_prefix | Optional. Define the prefix for branches that should be preserved and not deleted. |
 | heads           | Optional. Whether or not to sync head branches. Defaults to true |
 | tags            | Optional. Whether or not to sync tags. Defaults to false |
 | force           | Whether or not to force commits when syncing. This is used to remove branches on downstream that no longer exist on upstream. This also allows gerrit-python-tools to overwrite refs that are not ancestors of a branch from upstream. Defaults to True. Setting this to False will remove the possibility of losing code present only on downstream, but downstream could become out of sync with upstream. |
